@@ -1,0 +1,7 @@
+@echo off
+REM Copy this file to proxy_local.bat (do not commit proxy_local.bat) and set your proxy.
+REM Build portable app.bat runs it automatically if present.
+REM
+REM Example (no real credentials in repo):
+REM   set "HTTP_PROXY=http://proxy.example.com:8080"
+REM   set "HTTPS_PROXY=http://user:password@proxy.example.com:8080"

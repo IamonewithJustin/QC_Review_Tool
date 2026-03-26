@@ -1,0 +1,2 @@
+# Install only on the machine that builds the Windows bundle (not required at runtime).
+pyinstaller==6.11.1
