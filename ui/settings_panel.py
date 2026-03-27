@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import customtkinter as ctk
 
+from core.config_store import DEFAULT_BASE_URL
+
 
 class SettingsPanel(ctk.CTkFrame):
     def __init__(self, master, **kwargs):
@@ -14,7 +16,7 @@ class SettingsPanel(ctk.CTkFrame):
         )
 
         self._api_key_var = ctk.StringVar()
-        self._base_url_var = ctk.StringVar(value="https://api.openai.com/v1")
+        self._base_url_var = ctk.StringVar(value=DEFAULT_BASE_URL)
         self._model1_var = ctk.StringVar(value="gpt-4o")
         self._model2_var = ctk.StringVar()
 

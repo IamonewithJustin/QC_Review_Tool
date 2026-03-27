@@ -11,11 +11,14 @@ from core.app_paths import get_data_dir
 
 CONFIG_PATH = get_data_dir() / "config.json"
 
+# Default OpenAI-compatible API base (users can change in API Settings)
+DEFAULT_BASE_URL = "https://chat.int.bayer.com/api/v2"
+
 
 @dataclass
 class AppConfig:
     api_key: str = ""
-    base_url: str = "https://api.openai.com/v1"
+    base_url: str = DEFAULT_BASE_URL
     # Model selections live here for persistence but are edited on the main screen
     model1: str = ""
     model2: str = ""
@@ -38,7 +41,7 @@ def load_config() -> AppConfig:
         data = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
         return AppConfig(
             api_key=data.get("api_key", ""),
-            base_url=data.get("base_url", "https://api.openai.com/v1"),
+            base_url=data.get("base_url", DEFAULT_BASE_URL),
             model1=data.get("model1", ""),
             model2=data.get("model2", ""),
             model3=data.get("model3", ""),

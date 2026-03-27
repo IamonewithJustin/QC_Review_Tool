@@ -1,6 +1,6 @@
 {
   "api_key": "",
-  "base_url": "https://api.openai.com/v1",
+  "base_url": "https://chat.int.bayer.com/api/v2",
   "model1": "",
   "model2": "",
   "model3": ""

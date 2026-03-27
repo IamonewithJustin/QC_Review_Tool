@@ -27,6 +27,10 @@ a = Analysis(
     datas=datas,
     hiddenimports=hiddenimports
     + [
+        "vendor",
+        "vendor.CTkScrollableDropdown",
+        "vendor.CTkScrollableDropdown.ctk_scrollable_dropdown",
+        "vendor.CTkScrollableDropdown.ctk_scrollable_dropdown_frame",
         "pdfplumber",
         "pdfminer",
         "pdfminer.six",

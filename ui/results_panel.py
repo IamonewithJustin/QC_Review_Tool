@@ -42,7 +42,7 @@ class ResultsPanel(ctk.CTkFrame):
             header, text="Analysis Results", font=ctk.CTkFont(size=15, weight="bold"), anchor="w"
         ).grid(row=0, column=0, sticky="w")
 
-        # Export control lives on the main window (left column); optional for tests
+        # Export control lives on the main window (action bar under results); optional for tests
         self._export_btn: ctk.CTkButton | None = None
 
         self._tab_view = ctk.CTkTabview(self)

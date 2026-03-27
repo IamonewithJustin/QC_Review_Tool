@@ -2,8 +2,8 @@
 Main application window.
 Layout (2 columns, no sidebar):
   Top toolbar — title + connection status + API Settings button
-  Left column — document + supporting files + model selector + prompt panel + run button
-  Right column — results panel
+  Left column — document + supporting files + model selector + prompt panel (spans full height to align with action bar)
+  Right column — results panel; below it — Run / Skip + Combine + Export + New QC (one row)
 """
 
 from __future__ import annotations
@@ -24,6 +24,7 @@ from ui.prompt_panel import PromptPanel
 from ui.results_panel import ResultsPanel
 from ui.api_setup_dialog import ApiSetupDialog
 from ui.combine_dialog import CombineDialog
+from vendor.CTkScrollableDropdown import CTkScrollableDropdown
 
 # Buffers streamed text for the results panel; worker thread only appends (no Tk calls).
 # Main thread flushes every CHUNK_FLUSH_MS so the event queue is not flooded.
@@ -39,7 +40,9 @@ class MainWindow(ctk.CTk):
         self.title("AI QC Document Reviewer")
         self.geometry("1180x840")
         self.minsize(860, 640)
-        self.after(80, self._apply_maximized)
+        # Maximize after the window exists (retry helps on some WMs / first paint)
+        self.after(100, self._apply_maximized)
+        self.after(400, self._apply_maximized)
 
         ctk.set_appearance_mode("System")
         ctk.set_default_color_theme("blue")
@@ -75,14 +78,28 @@ class MainWindow(ctk.CTk):
         self.after(200, self._check_api_on_startup)
 
     def _apply_maximized(self) -> None:
-        """Start with the window maximized (Windows: zoomed; Linux: -zoomed)."""
+        """Start maximized each launch (Windows: zoomed; Linux: -zoomed; else fill screen)."""
+        try:
+            self.update_idletasks()
+        except Exception:
+            pass
         try:
             self.state("zoomed")
+            return
         except Exception:
-            try:
-                self.attributes("-zoomed", True)
-            except Exception:
-                pass
+            pass
+        try:
+            self.attributes("-zoomed", True)
+            return
+        except Exception:
+            pass
+        # Fallback: full screen area (not exclusive fullscreen — taskbar usually still visible on Windows)
+        try:
+            w = self.winfo_screenwidth()
+            h = self.winfo_screenheight()
+            self.geometry(f"{w}x{h}+0+0")
+        except Exception:
+            pass
 
     # ------------------------------------------------------------------ #
     # Layout
@@ -92,6 +109,7 @@ class MainWindow(ctk.CTk):
         self.grid_columnconfigure(0, weight=25)
         self.grid_columnconfigure(1, weight=48)
         self.grid_rowconfigure(1, weight=1)
+        self.grid_rowconfigure(2, weight=0)
 
         # ── Top toolbar ──────────────────────────────────────────────────
         toolbar = ctk.CTkFrame(self, height=44, corner_radius=0, fg_color=("gray88", "gray18"))
@@ -118,126 +136,144 @@ class MainWindow(ctk.CTk):
             command=self._open_api_settings,
         ).grid(row=0, column=2, sticky="e", padx=(0, 10), pady=8)
 
-        # ── Left column ──────────────────────────────────────────────────
+        # ── Left column (rows 1–2) — bottom aligns with analysis action bar on the right ──
         left = ctk.CTkFrame(self, corner_radius=8)
-        left.grid(row=1, column=0, sticky="nsew", padx=(10, 5), pady=10)
+        left.grid(row=1, column=0, rowspan=2, sticky="nsew", padx=(10, 5), pady=(10, 10))
         left.grid_columnconfigure(0, weight=1)
-        left.grid_rowconfigure(2, weight=1)   # prompt panel expands; all other rows are fixed
+        # Prompt row grows; minsize reduced vs prior because supporting-file strip is taller
+        left.grid_rowconfigure(2, weight=1, minsize=120)
 
-        self._build_document_picker(left)          # row 0 — document + supporting files
+        # Row 0: document picker (wider) + status (right) — weights 5:3 ≈ 62.5% / 37.5%
+        upload_split = ctk.CTkFrame(left, fg_color="transparent")
+        upload_split.grid(row=0, column=0, sticky="nsew", padx=12, pady=(10, 4))
+        upload_split.grid_columnconfigure(0, weight=5)
+        upload_split.grid_columnconfigure(1, weight=3)
+        upload_split.grid_rowconfigure(0, weight=1)
+
+        self._build_document_picker(upload_split)
+        self._build_status_side(upload_split)
+
         self._build_model_selector(left)           # row 1
         self._prompt_panel = PromptPanel(left)
         self._prompt_panel.grid(row=2, column=0, sticky="nsew")
 
-        # Separator line above action buttons
-        ctk.CTkFrame(left, height=2, fg_color=("gray75", "gray30")).grid(
-            row=3, column=0, sticky="ew", padx=12, pady=(4, 0)
-        )
+        # ── Right column — results + action bar below ───────────────────
+        self._results_panel = ResultsPanel(self, corner_radius=8)
+        self._results_panel.grid(row=1, column=1, sticky="nsew", padx=(5, 10), pady=(10, 0))
 
-        # Run + Cancel on the same row
-        run_row = ctk.CTkFrame(left, fg_color="transparent")
-        run_row.grid(row=4, column=0, sticky="ew", padx=12, pady=(6, 4))
-        run_row.grid_columnconfigure(0, weight=1)
+        _btn_h = 46
+        action_row = ctk.CTkFrame(self, fg_color="transparent")
+        action_row.grid(row=2, column=1, sticky="ew", padx=(5, 10), pady=(8, 10))
+        action_row.grid_columnconfigure((0, 1, 2, 3), weight=1)
+
+        # Run + Skip share the first slot so Skip sits beside Run while running
+        run_group = ctk.CTkFrame(action_row, fg_color="transparent")
+        run_group.grid(row=0, column=0, sticky="ew", padx=(0, 4))
+        run_group.grid_columnconfigure(0, weight=1)
 
         self._run_btn = ctk.CTkButton(
-            run_row,
+            run_group,
             text="▶  Run Analysis",
             font=ctk.CTkFont(size=14, weight="bold"),
-            height=46,
+            height=_btn_h,
             command=self._on_run,
         )
         self._run_btn.grid(row=0, column=0, sticky="ew", padx=(0, 6))
 
         self._cancel_btn = ctk.CTkButton(
-            run_row,
+            run_group,
             text="⏭ Skip Model",
             font=ctk.CTkFont(size=12, weight="bold"),
-            height=46,
+            height=_btn_h,
             width=110,
             fg_color=("#c0392b", "#922b21"),
             hover_color=("#a93226", "#7b241c"),
             command=self._on_skip,
         )
-        # Hidden initially — shown only while running
         self._cancel_btn.grid(row=0, column=1)
         self._cancel_btn.grid_remove()
 
         self._combine_btn = ctk.CTkButton(
-            left,
+            action_row,
             text="🔀  Combine Analysis",
             font=ctk.CTkFont(size=13),
-            height=36,
+            height=_btn_h,
             state="disabled",
             fg_color=("gray70", "gray30"),
             hover_color=("gray60", "gray25"),
             command=self._on_combine,
         )
-        self._combine_btn.grid(row=5, column=0, sticky="ew", padx=12, pady=(0, 6))
+        self._combine_btn.grid(row=0, column=1, sticky="ew", padx=4)
 
         self._export_btn = ctk.CTkButton(
-            left,
+            action_row,
             text="Export to Word",
             font=ctk.CTkFont(size=13),
-            height=36,
+            height=_btn_h,
             state="disabled",
             fg_color=("#1f6aa5", "#144870"),
             hover_color=("#1a5a8f", "#10375a"),
             command=self._on_export_word,
         )
-        self._export_btn.grid(row=6, column=0, sticky="ew", padx=12, pady=(0, 6))
+        self._export_btn.grid(row=0, column=2, sticky="ew", padx=4)
 
-        ctk.CTkButton(
-            left,
+        self._new_qc_btn = ctk.CTkButton(
+            action_row,
             text="New QC Review",
             font=ctk.CTkFont(size=13),
-            height=36,
+            height=_btn_h,
             fg_color=("gray70", "gray30"),
             hover_color=("gray60", "gray25"),
             command=self._on_reset_form,
-        ).grid(row=7, column=0, sticky="ew", padx=12, pady=(0, 6))
-
-        ctk.CTkLabel(
-            left,
-            text="Progress",
-            font=ctk.CTkFont(size=11, weight="bold"),
-            text_color=("gray40", "gray55"),
-            anchor="w",
-        ).grid(row=8, column=0, sticky="w", padx=12, pady=(4, 2))
-
-        self._status_box = ctk.CTkTextbox(
-            left,
-            height=120,
-            wrap="word",
-            state="disabled",
-            font=ctk.CTkFont(size=12),
-            fg_color=("#f4f4f4", "#2a2a2a"),
-            text_color=("gray15", "gray90"),
         )
-        self._status_box.grid(row=9, column=0, sticky="ew", padx=12, pady=(0, 8))
+        self._new_qc_btn.grid(row=0, column=3, sticky="ew", padx=4)
 
-        # ── Right column ─────────────────────────────────────────────────
-        self._results_panel = ResultsPanel(self, corner_radius=8)
-        self._results_panel.grid(row=1, column=1, sticky="nsew", padx=(5, 10), pady=10)
         self._results_panel.set_export_button(self._export_btn)
 
     # ------------------------------------------------------------------ #
     # Document picker (+ supporting files under main document)
     # ------------------------------------------------------------------ #
     _MAX_SUPPORTING = 10
-    # Scrollable list: ~4 rows visible; up to 10 files — rest scrolls.
-    # For a shorter box (~50% height), use: (_SUPPORTING_VISIBLE_ROWS * _SUPPORTING_ROW_APPROX_PX) // 2
-    _SUPPORTING_ROW_APPROX_PX = 24
-    _SUPPORTING_VISIBLE_ROWS = 4
-    _SUPPORTING_LIST_HEIGHT = _SUPPORTING_VISIBLE_ROWS * _SUPPORTING_ROW_APPROX_PX
+    # Fixed-height strip for supporting files (CTkScrollableFrame otherwise expands vertically).
+    _SUPPORTING_LIST_SHELL_HEIGHT = 112
+    _SUPPORTING_SCROLL_INNER_HEIGHT = 100
+
+    def _build_status_side(self, parent: ctk.CTkFrame) -> None:
+        """Right column of the top row: Status label + text (matches upload area height)."""
+        pf = ctk.CTkFrame(parent, fg_color="transparent")
+        pf.grid(row=0, column=1, sticky="nsew", padx=(8, 0))
+        pf.grid_columnconfigure(0, weight=1)
+        pf.grid_rowconfigure(1, weight=1)
+
+        ctk.CTkLabel(
+            pf,
+            text="Status",
+            font=ctk.CTkFont(size=11, weight="bold"),
+            text_color=("gray40", "gray55"),
+            anchor="w",
+        ).grid(row=0, column=0, sticky="w", pady=(0, 4))
+
+        self._status_box = ctk.CTkTextbox(
+            pf,
+            height=120,
+            wrap="word",
+            state="disabled",
+            font=ctk.CTkFont(size=12),
+            fg_color=("#f4f4f4", "#2a2a2a"),
+            text_color=("gray15", "gray90"),
+            activate_scrollbars=True,
+        )
+        self._status_box.grid(row=1, column=0, sticky="nsew")
 
     def _build_document_picker(self, parent: ctk.CTkFrame) -> None:
         doc_frame = ctk.CTkFrame(parent, fg_color="transparent")
-        doc_frame.grid(row=0, column=0, sticky="ew", padx=12, pady=(10, 4))
+        doc_frame.grid(row=0, column=0, sticky="nw", padx=(0, 8), pady=0)
         doc_frame.grid_columnconfigure(1, weight=1)
 
-        ctk.CTkButton(
+        self._main_browse_btn = ctk.CTkButton(
             doc_frame, text="Browse main document", width=150, command=self._on_browse
-        ).grid(row=0, column=0, padx=(0, 8))
+        )
+        self._main_browse_btn.grid(row=0, column=0, padx=(0, 8))
 
         self._doc_label = ctk.CTkLabel(
             doc_frame,
@@ -255,23 +291,59 @@ class MainWindow(ctk.CTk):
         )
         self._supporting_browse_btn.grid(row=1, column=0, padx=(0, 8), pady=(6, 4), sticky="nw")
 
+        supporting_hint = ctk.CTkFrame(doc_frame, fg_color="transparent")
+        supporting_hint.grid(row=1, column=1, sticky="ew", pady=(6, 4))
+        supporting_hint.grid_columnconfigure(0, weight=1)
+
+        ctk.CTkLabel(
+            supporting_hint,
+            text="optional",
+            anchor="w",
+            font=ctk.CTkFont(size=11),
+            text_color=("gray50", "gray60"),
+        ).grid(row=0, column=0, sticky="w")
+
         self._supporting_count_label = ctk.CTkLabel(
-            doc_frame,
+            supporting_hint,
             text=f"0 / {self._MAX_SUPPORTING}",
             font=ctk.CTkFont(size=11),
             text_color=("gray50", "gray60"),
         )
-        self._supporting_count_label.grid(row=1, column=1, sticky="e", pady=(6, 4))
+        self._supporting_count_label.grid(row=0, column=1, sticky="e")
 
-        self._supporting_scroll = ctk.CTkScrollableFrame(
+        # Hard-cap height: CTkScrollableFrame's outer frame can grow with row weight=1 otherwise.
+        self._supporting_list_shell = ctk.CTkFrame(
             doc_frame,
-            height=self._SUPPORTING_LIST_HEIGHT,
             fg_color="transparent",
+            height=self._SUPPORTING_LIST_SHELL_HEIGHT,
+            corner_radius=0,
         )
-        self._supporting_scroll.grid(
+        self._supporting_list_shell.grid(
             row=2, column=0, columnspan=2, sticky="ew", pady=(0, 4)
         )
+        self._supporting_list_shell.grid_propagate(False)
+        self._supporting_list_shell.grid_columnconfigure(0, weight=1)
+        self._supporting_list_shell.grid_rowconfigure(0, weight=1)
+
+        self._supporting_scroll = ctk.CTkScrollableFrame(
+            self._supporting_list_shell,
+            height=self._SUPPORTING_SCROLL_INNER_HEIGHT,
+            width=100,
+            fg_color="transparent",
+        )
+        self._supporting_scroll.grid(row=0, column=0, sticky="nsew")
         self._supporting_scroll.grid_columnconfigure(0, weight=1)
+
+        def _fit_supporting_scroll_width(_event=None) -> None:
+            try:
+                w = self._supporting_list_shell.winfo_width()
+                if w > 1:
+                    self._supporting_scroll.configure(width=max(w - 12, 120))
+            except Exception:
+                pass
+
+        self._supporting_list_shell.bind("<Configure>", lambda e: _fit_supporting_scroll_width())
+        self.after(50, _fit_supporting_scroll_width)
 
         self._refresh_supporting_files_list()
 
@@ -385,6 +457,26 @@ class MainWindow(ctk.CTk):
             combo.grid(row=2, column=col, sticky="ew", padx=(10, 10), pady=(0, 10))
             self._model_combos.append(combo)
 
+        # Scrollable dropdown + scrollbar (native tk menu is not scrollable / no wheel)
+        self._model_scroll_dropdowns: list[CTkScrollableDropdown] = []
+        combo_w = 160
+        for combo in self._model_combos:
+            combo._open_dropdown_menu = lambda: None  # type: ignore[method-assign]
+            vals = list(combo.cget("values"))
+            dd = CTkScrollableDropdown(
+                combo,
+                values=vals,
+                height=220,
+                width=combo_w,
+                justify="left",
+                button_height=26,
+                font=ctk.CTkFont(size=12),
+                resize=True,
+                frame_corner_radius=8,
+                scrollbar=True,
+            )
+            self._model_scroll_dropdowns.append(dd)
+
     def _get_selected_models(self) -> list[str]:
         """Return non-blank, non-sentinel model names from the three selectors."""
         sentinel = getattr(self, "_NONE_SENTINEL", "")
@@ -443,6 +535,8 @@ class MainWindow(ctk.CTk):
             current = combo.get()
             values = ([sentinel] + model_ids) if i > 0 else model_ids
             combo.configure(values=values)
+            if i < len(self._model_scroll_dropdowns):
+                self._model_scroll_dropdowns[i].configure(values=values)
             if current and current not in (model_ids + [sentinel]):
                 combo.set(current)
             else:
@@ -502,6 +596,18 @@ class MainWindow(ctk.CTk):
     # ------------------------------------------------------------------ #
     # Document browsing
     # ------------------------------------------------------------------ #
+    def _set_document_browse_busy(self, busy: bool) -> None:
+        """Disable browse buttons while files are being read (local disk)."""
+        state = "disabled" if busy else "normal"
+        self._main_browse_btn.configure(state=state)
+        self._supporting_browse_btn.configure(state=state)
+
+    def _flush_load_status(self, msg: str) -> None:
+        """Show load progress in the Status box and refresh the UI."""
+        self._set_status_plain(msg)
+        self.update_idletasks()
+        self.update()
+
     def _on_browse(self) -> None:
         path = fd.askopenfilename(
             title="Select document",
@@ -514,22 +620,31 @@ class MainWindow(ctk.CTk):
         if not path:
             return
 
+        fname = Path(path).name
+        self._set_document_browse_busy(True)
         try:
-            text = document_reader.read_document(path)
-        except Exception as exc:
-            mb.showerror("Error reading document", str(exc))
-            return
+            self._flush_load_status(f"Loading document: {fname}…")
+            try:
+                text = document_reader.read_document(path)
+            except Exception as exc:
+                mb.showerror("Error reading document", str(exc))
+                self._flush_load_status(f"Failed to load document: {fname}")
+                return
 
-        if not text.strip():
-            mb.showwarning("Empty document", "The selected document contains no readable text.")
-            return
+            if not text.strip():
+                mb.showwarning("Empty document", "The selected document contains no readable text.")
+                self._flush_load_status("No text could be read from the document.")
+                return
 
-        self._document_path = path
-        self._document_text = text
-        filename = Path(path).name
-        self._doc_label.configure(text=filename, text_color=("gray10", "gray90"))
-        self._results_panel.set_document_filename(filename)
-        self._set_status_plain(f"Document loaded: {len(text):,} characters")
+            self._document_path = path
+            self._document_text = text
+            self._doc_label.configure(text=fname, text_color=("gray10", "gray90"))
+            self._results_panel.set_document_filename(fname)
+            self._flush_load_status(
+                f"Document loaded: {fname} — {len(text):,} characters"
+            )
+        finally:
+            self._set_document_browse_busy(False)
 
     def _on_export_word(self) -> None:
         self._results_panel.open_export_dialog()
@@ -564,20 +679,42 @@ class MainWindow(ctk.CTk):
             )
             paths = paths[:slots_left]
 
+        total = len(paths)
+        before_count = len(self._supporting_files)
         errors: list[str] = []
-        for path in paths:
-            fname = Path(path).name
-            try:
-                text = document_reader.read_document(path)
-            except Exception as exc:
-                errors.append(f"{fname}: {exc}")
-                continue
-            if not text.strip():
-                errors.append(f"{fname}: no readable text found")
-                continue
-            self._supporting_files.append((fname, text))
+        self._set_document_browse_busy(True)
+        try:
+            for i, path in enumerate(paths, start=1):
+                fname = Path(path).name
+                self._flush_load_status(
+                    f"Loading supporting files ({i}/{total}): {fname}…"
+                )
+                try:
+                    text = document_reader.read_document(path)
+                except Exception as exc:
+                    errors.append(f"{fname}: {exc}")
+                    continue
+                if not text.strip():
+                    errors.append(f"{fname}: no readable text found")
+                    continue
+                self._supporting_files.append((fname, text))
 
-        self._refresh_supporting_files_list()
+            self._refresh_supporting_files_list()
+
+            added = len(self._supporting_files) - before_count
+            if added > 0:
+                self._flush_load_status(
+                    f"Supporting files: finished — added {added} file(s) "
+                    f"({len(self._supporting_files)} total)."
+                )
+            elif errors:
+                self._flush_load_status(
+                    "Supporting files: no files could be loaded (see warning)."
+                )
+            else:
+                self._flush_load_status("")
+        finally:
+            self._set_document_browse_busy(False)
 
         if errors:
             mb.showwarning(
@@ -867,7 +1004,7 @@ class MainWindow(ctk.CTk):
     # Combine / summary
     # ------------------------------------------------------------------ #
     def _on_reset_form(self) -> None:
-        """Restore the UI to a fresh-launch state (document, results, progress, prompts)."""
+        """Restore the UI to a fresh-launch state (document, results, status, prompts)."""
         if self._running:
             mb.showwarning(
                 "New QC Review unavailable",
@@ -877,7 +1014,7 @@ class MainWindow(ctk.CTk):
             return
         if not mb.askyesno(
             "New QC Review",
-            "Clear the document, results, and progress and restore default model selections?",
+            "Clear the document, results, and status and restore default model selections?",
             parent=self,
         ):
             return
@@ -1002,7 +1139,7 @@ class MainWindow(ctk.CTk):
         self._refresh_run_status_display()
 
     # ------------------------------------------------------------------ #
-    # Status / progress display
+    # Status display
     # ------------------------------------------------------------------ #
     def _write_status_box(self, text: str) -> None:
         self._status_box.configure(state="normal")
@@ -1012,7 +1149,7 @@ class MainWindow(ctk.CTk):
         self._status_box.see("end")
 
     def _set_status_plain(self, msg: str) -> None:
-        """Replace the progress area with a single message (clears run history)."""
+        """Replace the status area with a single message (clears run history)."""
         self._run_status_completed_lines.clear()
         self._write_status_box(msg)
 

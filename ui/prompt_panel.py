@@ -26,7 +26,8 @@ class PromptPanel(ctk.CTkFrame):
     # ------------------------------------------------------------------ #
     def _build_ui(self) -> None:
         self.grid_columnconfigure(0, weight=1)
-        self.grid_rowconfigure(1, weight=1)   # additional prompting expands
+        # Text area expands; only the CTkTextbox scrolls internally for long content
+        self.grid_rowconfigure(1, weight=1, minsize=120)
 
         # --- Row 0: "Additional Prompting (optional)" then View Base Prompt directly after ---
         header = ctk.CTkFrame(self, fg_color="transparent")
@@ -49,13 +50,13 @@ class PromptPanel(ctk.CTkFrame):
             command=self._on_view_base_prompt,
         ).grid(row=0, column=1, sticky="w", padx=(10, 0))
 
-        # --- Row 1: editable additional prompting (expands) ---
+        # --- Row 1: editable additional prompting (scrolls inside the textbox only) ---
         self._additional_box = ctk.CTkTextbox(self, wrap="word")
         self._additional_box.grid(row=1, column=0, sticky="nsew", padx=12, pady=(0, 8))
 
         # --- Row 2: toolbar ---
         toolbar = ctk.CTkFrame(self, fg_color="transparent")
-        toolbar.grid(row=2, column=0, sticky="ew", padx=12, pady=(0, 10))
+        toolbar.grid(row=2, column=0, sticky="ew", padx=12, pady=(0, 8))
         toolbar.grid_columnconfigure(2, weight=1)
 
         ctk.CTkButton(
